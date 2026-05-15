@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h3 class="card-title mb-3">数据库未就绪</h3>
+        <p class="text-muted mb-4">当前页面需要访问数据库，但后端返回了错误。常见原因是 Supabase 未建表或 DATABASE_URL 配置不正确。</p>
+        <div class="alert alert-danger" role="alert" style="white-space: pre-wrap;">{{ error }}</div>
+        <div class="mt-4">
+          <div class="mb-2"><strong>你可以按下面顺序排查：</strong></div>
+          <ol class="mb-0">
+            <li>Vercel 项目中配置 <code>DATABASE_URL</code>、<code>SECRET_KEY</code>（Production + Preview 都要配）。</li>
+            <li>Supabase SQL Editor 执行 <code>supabase/migrations/init.sql</code> 建表。</li>
+            <li>重新部署后访问 <code>/healthz</code> 检查数据库连通性。</li>
+          </ol>
+        </div>
+        <div class="mt-4">
+          <a class="btn btn-primary" href="{{ url_for('login') }}">返回登录</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

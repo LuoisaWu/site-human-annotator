@@ -120,12 +120,20 @@ CATEGORIES = {
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    if app.config.get('DB_DISABLED'):
+        return None
+    try:
+        return db.session.get(User, int(user_id))
+    except Exception:
+        return None
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         try:
+            if app.config.get('DB_DISABLED'):
+                flash('数据库未配置，无法登录。请先在 Vercel 环境变量中设置 DATABASE_URL 并完成 Supabase 建表。', 'danger')
+                return redirect(url_for('login'))
             username = request.form.get('username')
             password = request.form.get('password')
 
@@ -149,6 +157,9 @@ def login():
 def register():
     if request.method == 'POST':
         try:
+            if app.config.get('DB_DISABLED'):
+                flash('数据库未配置，无法注册。请先在 Vercel 环境变量中设置 DATABASE_URL 并完成 Supabase 建表。', 'danger')
+                return redirect(url_for('register'))
             username = request.form.get('username')
             password = request.form.get('password')
 
@@ -195,34 +206,37 @@ def logout():
 @app.route('/')
 @login_required
 def index():
-    page = request.args.get('page', 1, type=int)
-    mode = request.args.get('mode', 'sequential')
+    try:
+        page = request.args.get('page', 1, type=int)
+        mode = request.args.get('mode', 'sequential')
 
-    user_annotations = {
-        a.website_id: a.label
-        for a in Annotation.query.filter_by(user_id=current_user.id).all()
-    }
+        user_annotations = {
+            a.website_id: a.label
+            for a in Annotation.query.filter_by(user_id=current_user.id).all()
+        }
 
-    if mode == 'random':
-        websites = Website.query.order_by(func.random()).limit(20).all()
-        pagination = None
-    else:
-        pagination = Website.query.paginate(
-            page=page,
-            per_page=20,
-            error_out=False
+        if mode == 'random':
+            websites = Website.query.order_by(func.random()).limit(20).all()
+            pagination = None
+        else:
+            pagination = Website.query.paginate(
+                page=page,
+                per_page=20,
+                error_out=False
+            )
+
+            websites = pagination.items
+
+        return render_template(
+            'index.html',
+            websites=websites,
+            categories=CATEGORIES,
+            pagination=pagination,
+            mode=mode,
+            user_annotations=user_annotations
         )
-
-        websites = pagination.items
-
-    return render_template(
-        'index.html',
-        websites=websites,
-        categories=CATEGORIES,
-        pagination=pagination,
-        mode=mode,
-        user_annotations=user_annotations
-    )
+    except Exception as e:
+        return render_template('db_error.html', error=str(e))
 
 @app.route('/annotate', methods=['POST'])
 @login_required
