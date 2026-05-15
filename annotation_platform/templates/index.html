@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>网站标注</h2>
+    <div>
+        {% if mode == 'random' %}
+            <a href="{{ url_for('index', mode='sequential') }}" class="btn btn-outline-secondary">切换到顺序模式</a>
+            <a href="{{ url_for('index', mode='random') }}" class="btn btn-primary">换一批随机(20个)</a>
+        {% else %}
+            <a href="{{ url_for('index', mode='random') }}" class="btn btn-outline-primary">切换到随机抽样模式</a>
+        {% endif %}
+    </div>
+</div>
+
+{% if not websites %}
+    <div class="alert alert-info">暂无数据。请导入CSV文件。</div>
+{% endif %}
+
+<div class="row">
+    {% for site in websites %}
+    <div class="col-md-12">
+        <div class="card website-card">
+            <div class="row g-0">
+                <div class="col-md-4">
+                    {% if site.screenshot_path %}
+                        <img src="{{ site.screenshot_path }}" class="img-fluid rounded-start website-screenshot" alt="Screenshot" onerror="this.src='https://via.placeholder.com/400x200?text=No+Screenshot'">
+                    {% else %}
+                        <img src="https://via.placeholder.com/400x200?text=No+Screenshot" class="img-fluid rounded-start website-screenshot" alt="No Screenshot">
+                    {% endif %}
+                </div>
+                <div class="col-md-8">
+                    <div class="card-body">
+                        <h5 class="card-title"><a href="http://{{ site.domain }}" target="_blank">{{ site.domain }}</a></h5>
+                        <p class="card-text">
+                            <strong>标题:</strong> {{ site.title or 'N/A' }} <br>
+                            <strong>ICP:</strong> {{ site.icp or 'N/A' }} <br>
+                            <strong>Server:</strong> {{ site.server or 'N/A' }}
+                        </p>
+                        
+                        <hr>
+                        <h6>请选择分类: <span class="badge bg-success d-none" id="saved-badge-{{ site.id }}">已保存</span></h6>
+                        <div class="row">
+                            {% for key, name in categories.items() %}
+                            <div class="col-md-3 category-radio">
+                                <div class="form-check">
+                                    <input class="form-check-input label-radio" type="radio" 
+                                           name="label_{{ site.id }}" 
+                                           id="radio_{{ site.id }}_{{ key }}" 
+                                           value="{{ key }}" 
+                                           data-website-id="{{ site.id }}"
+                                           {% if user_annotations.get(site.id) == key %}checked{% endif %}>
+                                    <label class="form-check-label" for="radio_{{ site.id }}_{{ key }}">
+                                        {{ key }} ({{ name }})
+                                    </label>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if pagination %}
+<nav aria-label="Page navigation" class="mt-4 mb-5">
+    <ul class="pagination justify-content-center">
+        {% if pagination.has_prev %}
+            <li class="page-item"><a class="page-link" href="{{ url_for('index', page=pagination.prev_num, mode='sequential') }}">上一页</a></li>
+        {% else %}
+            <li class="page-item disabled"><span class="page-link">上一页</span></li>
+        {% endif %}
+        
+        <li class="page-item disabled"><span class="page-link">第 {{ pagination.page }} 页 / 共 {{ pagination.pages }} 页</span></li>
+        
+        {% if pagination.has_next %}
+            <li class="page-item"><a class="page-link" href="{{ url_for('index', page=pagination.next_num, mode='sequential') }}">下一页</a></li>
+        {% else %}
+            <li class="page-item disabled"><span class="page-link">下一页</span></li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const radios = document.querySelectorAll('.label-radio');
+        
+        radios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                const websiteId = this.getAttribute('data-website-id');
+                const label = this.value;
+                
+                fetch('{{ url_for("annotate") }}', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        website_id: websiteId,
+                        label: label
+                    })
+                })
+                .then(async (response) => {
+                    const contentType = response.headers.get('content-type') || '';
+                    let data = null;
+                    if (contentType.includes('application/json')) {
+                        data = await response.json();
+                    } else {
+                        const text = await response.text();
+                        data = { status: 'error', message: text };
+                    }
+
+                    if (!response.ok) {
+                        const msg = data && data.message ? data.message : ('HTTP ' + response.status);
+                        throw new Error(msg);
+                    }
+
+                    return data;
+                })
+                .then(data => {
+                    if (data.status === 'success') {
+                        const badge = document.getElementById('saved-badge-' + websiteId);
+                        badge.classList.remove('d-none');
+                        setTimeout(() => {
+                            badge.classList.add('d-none');
+                        }, 2000);
+                    } else {
+                        alert('保存失败: ' + (data.message || '未知错误'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    const msg = (error && error.message) ? error.message : '请检查网络连接或重新登录后再试';
+                    if (msg.toLowerCase().includes('unauthorized')) {
+                        alert('登录已失效，请刷新页面重新登录后再试');
+                    } else {
+                        alert('保存失败: ' + msg);
+                    }
+                });
+            });
+        });
+    });
+</script>
+{% endblock %}

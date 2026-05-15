@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+    <div class="col-md-8">
+        <div class="card shadow-sm border-warning">
+            <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                <h4 class="mb-0">⚙️ 管理员后台 - 数据导入</h4>
+                <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-dark">返回标注</a>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-4">作为管理员，您可以随时上传新的 CSV 文件以更新或追加待标注的网站列表。上传的 CSV 文件必须包含 <code>Domain</code> 或 <code>URL</code> 列。</p>
+                
+                <form method="POST" action="{{ url_for('admin') }}" enctype="multipart/form-data">
+                    <div class="mb-4">
+                        <label for="csv_file" class="form-label fw-bold">选择 CSV 文件</label>
+                        <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="clear_existing" name="clear_existing" value="yes">
+                            <label class="form-check-label text-danger" for="clear_existing">
+                                <strong>清空当前数据库中所有的网站和标注记录</strong> 
+                                <br><small class="text-muted">(如果不勾选，上传的网站将追加到现有列表中)</small>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-warning btn-lg">上传并导入数据</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <div class="alert alert-info mt-4">
+            <h5>CSV 文件字段说明：</h5>
+            <ul>
+                <li><code>Domain</code> 或 <code>URL</code> (必填)：网站域名</li>
+                <li><code>Title</code> (选填)：网站标题</li>
+                <li><code>ICP</code> (选填)：备案信息</li>
+                <li><code>Server</code> (选填)：服务器信息</li>
+                <li><code>Screenshot_Path</code> 或 <code>Screenshot</code> (选填)：截图的相对路径或网络链接</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}
