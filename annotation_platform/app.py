@@ -136,9 +136,23 @@ def parse_labels(value):
         return [x for x in value if isinstance(x, str) and x]
     return []
 
+def extract_other_text(labels):
+    for k in labels or []:
+        if isinstance(k, str) and k.startswith('Other:'):
+            return k[len('Other:'):].strip()
+    return ''
+
 def format_labels(labels):
     parts = []
     for k in labels:
+        if isinstance(k, str) and k.startswith('Other:'):
+            cn = CATEGORIES.get('Other', 'Other')
+            custom = k[len('Other:'):].strip()
+            if custom:
+                parts.append(f"Other({cn}): {custom}")
+            else:
+                parts.append(f"Other({cn})")
+            continue
         cn = CATEGORIES.get(k, k)
         if cn == k:
             parts.append(k)
@@ -238,10 +252,18 @@ def index():
         page = request.args.get('page', 1, type=int)
         mode = request.args.get('mode', 'sequential')
 
+        user_other_texts = {}
         user_annotations = {
             a.website_id: parse_labels(a.label)
             for a in Annotation.query.filter_by(user_id=current_user.id).all()
         }
+        for website_id, labels in list(user_annotations.items()):
+            other_text = extract_other_text(labels)
+            if other_text:
+                user_other_texts[website_id] = other_text
+                base = [x for x in labels if not (isinstance(x, str) and x.startswith('Other:'))]
+                base.append('Other')
+                user_annotations[website_id] = list(dict.fromkeys([x for x in base if isinstance(x, str) and x]))
 
         if mode == 'random':
             websites = Website.query.order_by(func.random()).limit(20).all()
@@ -261,7 +283,8 @@ def index():
             categories=CATEGORIES,
             pagination=pagination,
             mode=mode,
-            user_annotations=user_annotations
+            user_annotations=user_annotations,
+            user_other_texts=user_other_texts
         )
     except Exception as e:
         return render_template('db_error.html', error=str(e))
@@ -275,6 +298,7 @@ def annotate():
         website_id = data.get('website_id')
         labels = data.get('labels', None)
         label = data.get('label', None)
+        other_text = data.get('other_text', '')
 
         if website_id is None:
             return jsonify({
@@ -302,7 +326,17 @@ def annotate():
         labels = [x for x in labels if isinstance(x, str) and x]
         labels = list(dict.fromkeys(labels))
 
-        invalid = [x for x in labels if x not in CATEGORIES]
+        if 'Other' in labels:
+            t = (other_text or '').strip()
+            if not t:
+                return jsonify({'status': 'error', 'message': 'Other label required'}), 400
+            labels = [x for x in labels if x != 'Other']
+            labels.append(f"Other:{t}")
+
+        invalid = [
+            x for x in labels
+            if (x not in CATEGORIES) and not (isinstance(x, str) and x.startswith('Other:') and x[len('Other:'):].strip())
+        ]
         if invalid:
             return jsonify({
                 'status': 'error',

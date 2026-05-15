@@ -40,6 +40,7 @@
                         
                         <hr>
                         <h6>请选择分类: <span class="badge bg-success d-none" id="saved-badge-{{ site.id }}">已保存</span></h6>
+                        {% set site_labels = user_annotations.get(site.id) or [] %}
                         <div class="row">
                             {% for key, name in categories.items() %}
                             <div class="col-md-3 category-radio">
@@ -49,10 +50,20 @@
                                            id="checkbox_{{ site.id }}_{{ key }}" 
                                            value="{{ key }}" 
                                            data-website-id="{{ site.id }}"
-                                           {% if key in (user_annotations.get(site.id) or []) %}checked{% endif %}>
+                                           {% if key in site_labels %}checked{% endif %}>
                                     <label class="form-check-label" for="checkbox_{{ site.id }}_{{ key }}">
                                         {{ key }} ({{ name }})
                                     </label>
+                                    {% if key == 'Other' %}
+                                        <input
+                                            type="text"
+                                            class="form-control form-control-sm mt-1 other-input"
+                                            data-website-id="{{ site.id }}"
+                                            placeholder="填写其他标签"
+                                            value="{{ user_other_texts.get(site.id, '') }}"
+                                            {% if 'Other' not in site_labels %}disabled{% endif %}
+                                        >
+                                    {% endif %}
                                 </div>
                             </div>
                             {% endfor %}
@@ -91,12 +102,80 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const inputs = document.querySelectorAll('.label-checkbox');
+        const otherInputs = document.querySelectorAll('.other-input');
+
+        function saveLabels(websiteId) {
+            const groupSelector = `.label-checkbox[data-website-id="${websiteId}"]`;
+            const labels = [...document.querySelectorAll(`${groupSelector}:checked`)].map(el => el.value);
+
+            const otherInput = document.querySelector(`.other-input[data-website-id="${websiteId}"]`);
+            const otherText = otherInput ? (otherInput.value || '').trim() : '';
+
+            if (labels.includes('Other') && !otherText) {
+                alert('选择 Other 时需要填写自定义标签');
+                if (otherInput) {
+                    otherInput.focus();
+                }
+                return;
+            }
+
+            fetch('{{ url_for("annotate") }}', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    website_id: websiteId,
+                    labels: labels,
+                    other_text: otherText
+                })
+            })
+            .then(async (response) => {
+                const contentType = response.headers.get('content-type') || '';
+                let data = null;
+                if (contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    const text = await response.text();
+                    data = { status: 'error', message: text };
+                }
+
+                if (!response.ok) {
+                    const msg = data && data.message ? data.message : ('HTTP ' + response.status);
+                    throw new Error(msg);
+                }
+
+                return data;
+            })
+            .then(data => {
+                if (data.status === 'success') {
+                    const badge = document.getElementById('saved-badge-' + websiteId);
+                    badge.classList.remove('d-none');
+                    setTimeout(() => {
+                        badge.classList.add('d-none');
+                    }, 2000);
+                } else {
+                    alert('保存失败: ' + (data.message || '未知错误'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                const msg = (error && error.message) ? error.message : '请检查网络连接或重新登录后再试';
+                if (msg.toLowerCase().includes('unauthorized')) {
+                    alert('登录已失效，请刷新页面重新登录后再试');
+                } else {
+                    alert('保存失败: ' + msg);
+                }
+            });
+        }
         
         inputs.forEach(input => {
             input.addEventListener('change', function() {
                 const websiteId = this.getAttribute('data-website-id');
                 const changed = this.value;
                 const groupSelector = `.label-checkbox[data-website-id="${websiteId}"]`;
+                const otherInput = document.querySelector(`.other-input[data-website-id="${websiteId}"]`);
 
                 if (changed === 'Unsure' && this.checked) {
                     document.querySelectorAll(groupSelector).forEach(el => {
@@ -111,56 +190,37 @@
                     }
                 }
 
-                const labels = [...document.querySelectorAll(`${groupSelector}:checked`)].map(el => el.value);
+                if (changed === 'Other') {
+                    if (otherInput) {
+                        otherInput.disabled = !this.checked;
+                        if (this.checked) {
+                            otherInput.focus();
+                        }
+                    }
+                } else if (otherInput) {
+                    const otherChecked = !!document.querySelector(`${groupSelector}[value="Other"]:checked`);
+                    otherInput.disabled = !otherChecked;
+                }
 
-                fetch('{{ url_for("annotate") }}', {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        website_id: websiteId,
-                        labels: labels
-                    })
-                })
-                .then(async (response) => {
-                    const contentType = response.headers.get('content-type') || '';
-                    let data = null;
-                    if (contentType.includes('application/json')) {
-                        data = await response.json();
-                    } else {
-                        const text = await response.text();
-                        data = { status: 'error', message: text };
-                    }
+                saveLabels(websiteId);
+            });
+        });
 
-                    if (!response.ok) {
-                        const msg = data && data.message ? data.message : ('HTTP ' + response.status);
-                        throw new Error(msg);
-                    }
-
-                    return data;
-                })
-                .then(data => {
-                    if (data.status === 'success') {
-                        const badge = document.getElementById('saved-badge-' + websiteId);
-                        badge.classList.remove('d-none');
-                        setTimeout(() => {
-                            badge.classList.add('d-none');
-                        }, 2000);
-                    } else {
-                        alert('保存失败: ' + (data.message || '未知错误'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    const msg = (error && error.message) ? error.message : '请检查网络连接或重新登录后再试';
-                    if (msg.toLowerCase().includes('unauthorized')) {
-                        alert('登录已失效，请刷新页面重新登录后再试');
-                    } else {
-                        alert('保存失败: ' + msg);
-                    }
-                });
+        otherInputs.forEach(input => {
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const websiteId = this.getAttribute('data-website-id');
+                    saveLabels(websiteId);
+                }
+            });
+            input.addEventListener('blur', function() {
+                const websiteId = this.getAttribute('data-website-id');
+                const groupSelector = `.label-checkbox[data-website-id="${websiteId}"]`;
+                const otherChecked = !!document.querySelector(`${groupSelector}[value="Other"]:checked`);
+                if (otherChecked) {
+                    saveLabels(websiteId);
+                }
             });
         });
     });
