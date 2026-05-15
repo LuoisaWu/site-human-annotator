@@ -15,6 +15,7 @@ import pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
 import traceback
+import json
 
 load_dotenv()
 
@@ -118,6 +119,33 @@ CATEGORIES = {
     "Unsure": "不确定"
 }
 
+def parse_labels(value):
+    if not value:
+        return []
+    if isinstance(value, str):
+        v = value.strip()
+        if v.startswith('[') and v.endswith(']'):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return [x for x in parsed if isinstance(x, str) and x]
+            except Exception:
+                pass
+        return [value]
+    if isinstance(value, list):
+        return [x for x in value if isinstance(x, str) and x]
+    return []
+
+def format_labels(labels):
+    parts = []
+    for k in labels:
+        cn = CATEGORIES.get(k, k)
+        if cn == k:
+            parts.append(k)
+        else:
+            parts.append(f"{k}({cn})")
+    return "; ".join(parts)
+
 @login_manager.user_loader
 def load_user(user_id):
     if app.config.get('DB_DISABLED'):
@@ -211,7 +239,7 @@ def index():
         mode = request.args.get('mode', 'sequential')
 
         user_annotations = {
-            a.website_id: a.label
+            a.website_id: parse_labels(a.label)
             for a in Annotation.query.filter_by(user_id=current_user.id).all()
         }
 
@@ -245,9 +273,10 @@ def annotate():
         data = request.get_json(silent=True) or {}
 
         website_id = data.get('website_id')
-        label = data.get('label')
+        labels = data.get('labels', None)
+        label = data.get('label', None)
 
-        if website_id is None or not label:
+        if website_id is None:
             return jsonify({
                 'status': 'error',
                 'message': 'Invalid data'
@@ -261,7 +290,20 @@ def annotate():
                 'message': 'Invalid website_id'
             }), 400
 
-        if label not in CATEGORIES:
+        if labels is None:
+            labels = [label] if label else []
+
+        if not isinstance(labels, list):
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid labels'
+            }), 400
+
+        labels = [x for x in labels if isinstance(x, str) and x]
+        labels = list(dict.fromkeys(labels))
+
+        invalid = [x for x in labels if x not in CATEGORIES]
+        if invalid:
             return jsonify({
                 'status': 'error',
                 'message': 'Invalid label'
@@ -272,14 +314,22 @@ def annotate():
             user_id=current_user.id
         ).first()
 
+        if not labels:
+            if annotation:
+                db.session.delete(annotation)
+                db.session.commit()
+            return jsonify({'status': 'success'})
+
+        serialized = json.dumps(labels, ensure_ascii=False)
+
         if annotation:
-            annotation.label = label
+            annotation.label = serialized
             annotation.timestamp = datetime.utcnow()
         else:
             annotation = Annotation(
                 website_id=website_id,
                 user_id=current_user.id,
-                label=label
+                label=serialized
             )
 
             db.session.add(annotation)
@@ -325,7 +375,7 @@ def export_csv():
             domain = row.domain or ''
             icp = row.icp or ''
             server = row.server or ''
-            label = row.label or ''
+            label = ";".join(parse_labels(row.label))
             timestamp = row.timestamp.strftime('%Y-%m-%d %H:%M:%S') if row.timestamp else ''
             yield f'{row.annotator},{domain},{title},{icp},{server},{label},{timestamp}\n'
 
@@ -350,7 +400,7 @@ def dashboard():
         func.count(Annotation.id).label('count')
     ).outerjoin(Annotation).group_by(User.id).all()
 
-    recent_annotations = db.session.query(
+    recent_annotations_raw = db.session.query(
         User.username,
         Website.domain,
         Annotation.label,
@@ -358,6 +408,17 @@ def dashboard():
     ).join(User, Annotation.user_id == User.id) \
      .join(Website, Annotation.website_id == Website.id) \
      .order_by(Annotation.timestamp.desc()).limit(50).all()
+
+    recent_annotations = [
+        {
+            'username': r.username,
+            'domain': r.domain,
+            'labels': parse_labels(r.label),
+            'label_display': format_labels(parse_labels(r.label)),
+            'timestamp': r.timestamp
+        }
+        for r in recent_annotations_raw
+    ]
 
     return render_template(
         'dashboard.html',

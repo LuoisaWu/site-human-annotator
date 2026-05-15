@@ -74,7 +74,7 @@
                             <tr>
                                 <td><span class="badge bg-secondary">{{ ann.username }}</span></td>
                                 <td><a href="http://{{ ann.domain }}" target="_blank">{{ ann.domain }}</a></td>
-                                <td>{{ categories.get(ann.label, ann.label) }} ({{ ann.label }})</td>
+                                <td>{{ ann.label_display }}</td>
                                 <td><small class="text-muted">{{ ann.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</small></td>
                             </tr>
                             {% else %}

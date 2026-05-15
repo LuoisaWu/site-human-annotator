@@ -44,13 +44,13 @@
                             {% for key, name in categories.items() %}
                             <div class="col-md-3 category-radio">
                                 <div class="form-check">
-                                    <input class="form-check-input label-radio" type="radio" 
+                                    <input class="form-check-input label-checkbox" type="checkbox" 
                                            name="label_{{ site.id }}" 
-                                           id="radio_{{ site.id }}_{{ key }}" 
+                                           id="checkbox_{{ site.id }}_{{ key }}" 
                                            value="{{ key }}" 
                                            data-website-id="{{ site.id }}"
-                                           {% if user_annotations.get(site.id) == key %}checked{% endif %}>
-                                    <label class="form-check-label" for="radio_{{ site.id }}_{{ key }}">
+                                           {% if key in (user_annotations.get(site.id) or []) %}checked{% endif %}>
+                                    <label class="form-check-label" for="checkbox_{{ site.id }}_{{ key }}">
                                         {{ key }} ({{ name }})
                                     </label>
                                 </div>
@@ -90,13 +90,29 @@
 {% block scripts %}
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        const radios = document.querySelectorAll('.label-radio');
+        const inputs = document.querySelectorAll('.label-checkbox');
         
-        radios.forEach(radio => {
-            radio.addEventListener('change', function() {
+        inputs.forEach(input => {
+            input.addEventListener('change', function() {
                 const websiteId = this.getAttribute('data-website-id');
-                const label = this.value;
-                
+                const changed = this.value;
+                const groupSelector = `.label-checkbox[data-website-id="${websiteId}"]`;
+
+                if (changed === 'Unsure' && this.checked) {
+                    document.querySelectorAll(groupSelector).forEach(el => {
+                        if (el.value !== 'Unsure') {
+                            el.checked = false;
+                        }
+                    });
+                } else if (changed !== 'Unsure' && this.checked) {
+                    const unsure = document.querySelector(`${groupSelector}[value="Unsure"]`);
+                    if (unsure) {
+                        unsure.checked = false;
+                    }
+                }
+
+                const labels = [...document.querySelectorAll(`${groupSelector}:checked`)].map(el => el.value);
+
                 fetch('{{ url_for("annotate") }}', {
                     method: 'POST',
                     credentials: 'include',
@@ -105,7 +121,7 @@
                     },
                     body: JSON.stringify({
                         website_id: websiteId,
-                        label: label
+                        labels: labels
                     })
                 })
                 .then(async (response) => {
