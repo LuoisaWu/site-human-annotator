@@ -301,5 +301,146 @@ def annotate():
             'message': str(e)
         }), 500
 
+@app.route('/export')
+@login_required
+def export_csv():
+    if app.config.get('DB_DISABLED'):
+        return jsonify({'status': 'error', 'message': 'DATABASE_URL is not set'}), 500
+
+    query = db.session.query(
+        User.username.label('annotator'),
+        Website.domain,
+        Website.title,
+        Website.icp,
+        Website.server,
+        Annotation.label,
+        Annotation.timestamp
+    ).join(Website, Annotation.website_id == Website.id) \
+     .join(User, Annotation.user_id == User.id).all()
+
+    def generate():
+        yield 'Annotator,Domain,Title,ICP,Server,Label,Timestamp\n'
+        for row in query:
+            title = f'"{row.title}"' if row.title else ''
+            domain = row.domain or ''
+            icp = row.icp or ''
+            server = row.server or ''
+            label = row.label or ''
+            timestamp = row.timestamp.strftime('%Y-%m-%d %H:%M:%S') if row.timestamp else ''
+            yield f'{row.annotator},{domain},{title},{icp},{server},{label},{timestamp}\n'
+
+    return Response(
+        generate(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=annotations.csv'}
+    )
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    if app.config.get('DB_DISABLED'):
+        return render_template('db_error.html', error='DATABASE_URL is not set')
+
+    total_annotations = Annotation.query.count()
+    total_users = User.query.count()
+    total_websites = Website.query.count()
+
+    user_stats = db.session.query(
+        User.username,
+        func.count(Annotation.id).label('count')
+    ).outerjoin(Annotation).group_by(User.id).all()
+
+    recent_annotations = db.session.query(
+        User.username,
+        Website.domain,
+        Annotation.label,
+        Annotation.timestamp
+    ).join(User, Annotation.user_id == User.id) \
+     .join(Website, Annotation.website_id == Website.id) \
+     .order_by(Annotation.timestamp.desc()).limit(50).all()
+
+    return render_template(
+        'dashboard.html',
+        total_annotations=total_annotations,
+        total_users=total_users,
+        total_websites=total_websites,
+        user_stats=user_stats,
+        recent_annotations=recent_annotations,
+        categories=CATEGORIES
+    )
+
+@app.route('/admin', methods=['GET', 'POST'])
+@login_required
+def admin():
+    if app.config.get('DB_DISABLED'):
+        return render_template('db_error.html', error='DATABASE_URL is not set')
+
+    if not getattr(current_user, 'is_admin', False):
+        flash('您没有管理员权限。', 'danger')
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        file = request.files.get('csv_file')
+        clear_existing = request.form.get('clear_existing') == 'yes'
+
+        if not file or not file.filename.endswith('.csv'):
+            flash('请上传有效的CSV文件 (.csv)。', 'danger')
+            return redirect(url_for('admin'))
+
+        try:
+            df = pd.read_csv(file)
+            columns = df.columns.tolist()
+
+            def get_col(candidates):
+                for c in candidates:
+                    if c in columns:
+                        return c
+                return None
+
+            domain_col = get_col(['Domain', 'domain', 'url', 'URL'])
+            title_col = get_col(['Title', 'title'])
+            icp_col = get_col(['ICP', 'icp'])
+            server_col = get_col(['Server', 'server'])
+            screenshot_col = get_col(['Screenshot_Path', 'screenshot_path', 'screenshot', 'Screenshot'])
+
+            if not domain_col:
+                flash('CSV文件缺少 Domain / URL 列，导入失败。', 'danger')
+                return redirect(url_for('admin'))
+
+            if clear_existing:
+                Annotation.query.delete()
+                Website.query.delete()
+                db.session.commit()
+
+            websites_to_add = []
+            for _, row in df.iterrows():
+                domain = str(row[domain_col]) if pd.notna(row[domain_col]) else ''
+                if not domain:
+                    continue
+
+                title = str(row[title_col]) if title_col and pd.notna(row[title_col]) else ''
+                icp = str(row[icp_col]) if icp_col and pd.notna(row[icp_col]) else ''
+                server = str(row[server_col]) if server_col and pd.notna(row[server_col]) else ''
+                screenshot_path = str(row[screenshot_col]) if screenshot_col and pd.notna(row[screenshot_col]) else ''
+
+                websites_to_add.append(Website(
+                    domain=domain,
+                    title=title,
+                    icp=icp,
+                    server=server,
+                    screenshot_path=screenshot_path
+                ))
+
+            db.session.add_all(websites_to_add)
+            db.session.commit()
+            flash(f'成功导入 {len(websites_to_add)} 个待标注网站！', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'导入时发生错误: {str(e)}', 'danger')
+
+        return redirect(url_for('admin'))
+
+    return render_template('admin.html')
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
