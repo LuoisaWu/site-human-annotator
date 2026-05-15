@@ -27,14 +27,12 @@ app = Flask(__name__,
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your_secret_key_here')
 
-# Vercel Serverless 环境推荐使用 Transaction Pooler (6543端口) 避免 IPv6 解析问题
 db_url = os.environ.get("DATABASE_URL")
+db_disabled = False
 if not db_url:
-    raise RuntimeError(
-        "DATABASE_URL 环境变量未设置。\n"
-        "请在 Vercel Dashboard > Settings > Environment Variables 中添加 DATABASE_URL。\n"
-        "Supabase 连接字符串格式: postgresql://postgres.xxx:[PASSWORD]@aws-0-<region>.pooler.supabase.com:6543/postgres"
-    )
+    db_disabled = True
+    db_url = "sqlite:///:memory:"
+app.config['DB_DISABLED'] = db_disabled
 
 # URL-encode password 中的特殊字符（如 &, *, % 等）
 parsed = urlparse(db_url)
@@ -56,21 +54,15 @@ elif db_url.startswith('postgresql://') and not db_url.startswith('postgresql+ps
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Serverless 专属引擎配置:
-# 1. NullPool: 避免在 serverless function 冻结时连接保留，引发连接断开的 OperationalError
-# 2. sslmode: 确保安全连接
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    "poolclass": NullPool,
-    "connect_args": {
-        "sslmode": "require",
+if not db_disabled and db_url.startswith("postgresql+psycopg://"):
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        "poolclass": NullPool,
+        "connect_args": {
+            "sslmode": "require",
+        }
     }
-}
 
 db.init_app(app)
-
-# 自动创建数据库表（Vercel Serverless 也会执行）
-with app.app_context():
-    db.create_all()
 
 login_manager = LoginManager()
 login_manager.login_view = 'login'
@@ -84,11 +76,17 @@ def unauthorized():
 
 @app.route('/healthz')
 def healthz():
+    if app.config.get('DB_DISABLED'):
+        return jsonify({'ok': False, 'error': 'DATABASE_URL is not set'}), 500
     try:
         db.session.execute(text("select 1"))
         return jsonify({'ok': True}), 200
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+@app.route('/config')
+def config():
+    return jsonify({'db_disabled': bool(app.config.get('DB_DISABLED'))}), 200
 
 @app.route('/whoami')
 def whoami():
